@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1f6f5c">
+<title>SkyCooker — діагностика</title>
+<style>
+  :root {
+    --bg: #f6f7f5; --card: #ffffff; --text: #1d2321; --muted: #66706c;
+    --line: #dfe3e0; --accent: #1f6f5c; --accent-text: #ffffff;
+    --tx: #2457a6; --rx: #1f7a3a; --err: #b3261e; --warn: #8a5a00; --hl: #fff1b8;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121614; --card: #1b201e; --text: #e6ebe8; --muted: #9aa5a0;
+      --line: #2c3330; --accent: #4fb89b; --accent-text: #0d1311;
+      --tx: #8fb4ff; --rx: #7fd99a; --err: #ff8a80; --warn: #ffc86b; --hl: #4a4020;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 14px 16px 6px; }
+  h1 { font-size: 19px; margin: 0; }
+  .sub { color: var(--muted); font-size: 13px; }
+  main { padding: 8px 12px 40px; max-width: 760px; margin: 0 auto; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+            padding: 12px; margin: 10px 0; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--text);
+           border-radius: 9px; padding: 9px 12px; min-height: 42px; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .45; }
+  input[type=text] { font: 14px var(--mono); padding: 8px; border-radius: 8px; border: 1px solid var(--line);
+                     background: var(--bg); color: var(--text); min-width: 0; }
+  label { font-size: 14px; display: inline-flex; gap: 6px; align-items: center; }
+  .state { font-weight: 600; }
+  .state.on { color: var(--rx); } .state.off { color: var(--muted); }
+  .note { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+  .warn { color: var(--warn); font-size: 13px; }
+  #log { font: 12px/1.4 var(--mono); max-height: 320px; overflow: auto; background: var(--bg);
+         border-radius: 8px; padding: 8px; border: 1px solid var(--line); white-space: pre-wrap; word-break: break-all; }
+  .l-tx { color: var(--tx); } .l-rx { color: var(--rx); } .l-err { color: var(--err); } .l-info { color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; font: 13px var(--mono); }
+  th, td { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; }
+  th { color: var(--muted); font-weight: 500; }
+  td.changed { background: var(--hl); }
+  .scroll { overflow-x: auto; }
+  #pairBanner { display: none; padding: 10px; border-radius: 8px; background: var(--hl); margin-top: 8px; font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SkyCooker RMC-M92S — діагностика</h1>
+  <div class="sub">Протокол Ready for Sky (R4S) через Bluetooth LE · відкривати в Chrome на Android</div>
+</header>
+<main>
+  <section id="noBt" style="display:none">
+    <div class="warn">Цей браузер не підтримує Web Bluetooth. Відкрийте сторінку в Chrome на Android за адресою https://…</div>
+  </section>
+
+  <section>
+    <h2>1. Підключення</h2>
+    <div class="row">
+      <button class="primary" id="btnConnect">Знайти мультиварку</button>
+      <button id="btnDisconnect" disabled>Відключитись</button>
+      <span>Стан: <span id="connState" class="state off">не підключено</span></span>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <label><input type="checkbox" id="allDevices"> Показати всі пристрої поруч</label>
+    </div>
+    <p class="note">Вимкніть офіційний застосунок і шлюзи — мультиварка тримає лише одне підключення.
+      Якщо її немає у списку, поставте галочку «всі пристрої».</p>
+  </section>
+
+  <section>
+    <h2>2. Ключ і спарювання</h2>
+    <div class="row">
+      <input type="text" id="key" size="26" aria-label="Ключ (8 байт)">
+      <button id="btnNewKey">Новий ключ</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="primary" id="btnAuth" disabled>Авторизація</button>
+      <button id="btnPair" disabled>Спарювання (30 с)</button>
+    </div>
+    <div id="pairBanner">Утримуйте кнопку на мультиварці, поки не з’явиться «Спарено»…</div>
+    <p class="note">Ключ зберігається в браузері. При першому разі натисніть «Спарювання» і затисніть кнопку
+      Bluetooth/«Отложенный старт» на мультиварці (як в інструкції до неї). Надалі достатньо «Авторизація».</p>
+  </section>
+
+  <section>
+    <h2>3. Читання</h2>
+    <div class="row">
+      <button id="btnVersion" disabled>Версія</button>
+      <button id="btnTime" disabled>Синхр. часу</button>
+      <button class="primary" id="btnStatus" disabled>Статус</button>
+      <label><input type="checkbox" id="poll" disabled> Опитувати кожні 2 с</label>
+    </div>
+    <div class="scroll" style="margin-top:10px">
+      <table id="statusTable" aria-label="Байти статусу">
+        <thead><tr><th>#</th><th>hex</th><th>dec</th><th>припущення</th></tr></thead>
+        <tbody><tr><td colspan="4" class="l-info">ще немає даних</td></tr></tbody>
+      </table>
+    </div>
+    <p class="note">Підсвічені байти змінились з минулого разу. Колонка «припущення» — за відкритими джерелами для інших RMC, її треба підтвердити.</p>
+  </section>
+
+  <section>
+    <h2>4. Знімки програм</h2>
+    <p class="note" style="margin-top:0">Оберіть програму на панелі мультиварки (не запускаючи), впишіть її назву, натисніть «Знімок».
+      Так збираємо коди всіх 17 програм.</p>
+    <div class="row" style="margin-top:8px">
+      <input type="text" id="snapLabel" placeholder="напр. Каша, 30 хв" style="flex:1">
+      <button class="primary" id="btnSnap" disabled>Знімок</button>
+    </div>
+    <div class="scroll" style="margin-top:10px">
+      <table id="snapTable"><thead><tr><th>мітка</th><th>байти статусу</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="btnCopySnaps">Скопіювати знімки</button>
+      <button id="btnClearSnaps">Очистити</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>5. Команди</h2>
+    <div class="row">
+      <button id="btnStop" disabled>Стоп / скасувати</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <input type="text" id="rawCmd" size="4" placeholder="cmd" aria-label="Код команди hex">
+      <input type="text" id="rawData" placeholder="дані hex, напр. 01 02" style="flex:1" aria-label="Дані hex">
+      <button id="btnRaw" disabled>Надіслати</button>
+    </div>
+    <p class="warn">Довільні команди можуть увімкнути нагрів. Не надсилайте 03/05, якщо чаша порожня.</p>
+  </section>
+
+  <section>
+    <h2>Журнал</h2>
+    <div id="log" aria-live="polite"></div>
+    <div class="row" style="margin-top:8px">
+      <button id="btnCopyLog">Скопіювати журнал</button>
+      <button id="btnClearLog">Очистити</button>
+    </div>
+  </section>
+</main>
+
+<script>
+'use strict';
+const SVC = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const TX  = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const RX  = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+const CMD = { VERSION: 0x01, RUN: 0x03, STOP: 0x04, SET: 0x05, STATUS: 0x06, TIME: 0x6E, AUTH: 0xFF };
+const CMD_NAMES = { 0x01: 'версія', 0x03: 'старт', 0x04: 'стоп', 0x05: 'програма', 0x06: 'статус', 0x6E: 'час', 0xFF: 'авторизація' };
+// Припущення про байти статусу мультиварок RMC (з відкритих проєктів; для M92S треба перевірити)
+const STATUS_GUESS = ['програма', 'підпрограма', 'температура °C', 'години', 'хвилини',
+                      'відкл. старт, год', 'відкл. старт, хв', 'автопідігрів', 'стан', 'помилка?'];
+
+const $ = id => document.getElementById(id);
+let device = null, txChar = null, rxChar = null;
+let counter = 0, pending = null, chain = Promise.resolve();
+let rxBuf = [], lastStatus = null, pollTimer = null, authorized = false;
+let snaps = [];
+
+const hex = bytes => Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(' ');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function parseHex(s) {
+  const clean = String(s).replace(/0x/gi, '').replace(/[^0-9a-f]/gi, '');
+  if (clean.length % 2) throw new Error('непарна кількість hex-символів');
+  const out = [];
+  for (let i = 0; i < clean.length; i += 2) out.push(parseInt(clean.substr(i, 2), 16));
+  return out;
+}
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+};
+
+function log(kind, msg) {
+  const el = document.createElement('div');
+  el.className = 'l-' + kind;
+  const t = new Date().toLocaleTimeString('uk-UA', { hour12: false });
+  const tag = { tx: '→', rx: '←', err: '✖', info: '·' }[kind] || '·';
+  el.textContent = `${t} ${tag} ${msg}`;
+  const box = $('log');
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+}
+
+function setConnected(on) {
+  $('connState').textContent = on ? (authorized ? 'підключено, авторизовано' : 'підключено') : 'не підключено';
+  $('connState').className = 'state ' + (on ? 'on' : 'off');
+  for (const id of ['btnDisconnect', 'btnAuth', 'btnPair', 'btnVersion', 'btnTime', 'btnStatus',
+                    'poll', 'btnSnap', 'btnStop', 'btnRaw']) $(id).disabled = !on;
+  $('btnConnect').disabled = on;
+}
+
+// ---------- ключ ----------
+function newKey() {
+  const k = hex(crypto.getRandomValues(new Uint8Array(8)));
+  $('key').value = k; store.set('r4s_key', k);
+  log('info', 'Згенеровано новий ключ: ' + k + ' (потрібне повторне спарювання)');
+}
+function getKey() {
+  const k = parseHex($('key').value);
+  if (k.length !== 8) throw new Error('ключ має бути рівно 8 байт');
+  store.set('r4s_key', hex(k));
+  return k;
+}
+
+// ---------- BLE ----------
+async function connect() {
+  try {
+    const opts = $('allDevices').checked
+      ? { acceptAllDevices: true, optionalServices: [SVC] }
+      : { filters: [{ namePrefix: 'RMC' }, { namePrefix: 'SkyCooker' }, { namePrefix: 'Redmond' }, { services: [SVC] }],
+          optionalServices: [SVC] };
+    device = await navigator.bluetooth.requestDevice(opts);
+    log('info', `Обрано: ${device.name || '(без імені)'} id=${device.id}`);
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    const server = await device.gatt.connect();
+    log('info', 'GATT підключено, шукаю сервіс R4S…');
+    const svc = await server.getPrimaryService(SVC);
+    txChar = await svc.getCharacteristic(TX);
+    rxChar = await svc.getCharacteristic(RX);
+    const p = txChar.properties;
+    log('info', `TX: write=${p.write} writeWithoutResponse=${p.writeWithoutResponse}`);
+    rxChar.addEventListener('characteristicvaluechanged', onNotify);
+    await rxChar.startNotifications();
+    counter = 0; rxBuf = []; authorized = false;
+    setConnected(true);
+    log('info', 'Готово. Натисніть «Авторизація» (або «Спарювання» при першому разі).');
+  } catch (e) {
+    if (e && e.name === 'NotFoundError' && /cancel/i.test(e.message)) { log('info', 'Вибір скасовано'); return; }
+    log('err', 'Підключення: ' + (e && e.message || e));
+    if (device && device.gatt.connected) device.gatt.disconnect();
+  }
+}
+
+function disconnect() { if (device && device.gatt.connected) device.gatt.disconnect(); }
+
+function onDisconnected() {
+  stopPoll(); $('poll').checked = false;
+  authorized = false; txChar = rxChar = null;
+  if (pending) { clearTimeout(pending.timer); pending.resolve(null); pending = null; }
+  $('pairBanner').style.display = 'none';
+  setConnected(false);
+  log('err', 'Мультиварка відключилась');
+}
+
+function onNotify(ev) {
+  const v = ev.target.value;
+  const bytes = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+  if (bytes[0] === 0x55 && rxBuf.length === 0) rxBuf = Array.from(bytes);
+  else if (bytes[0] === 0x55 && rxBuf.length) { log('err', 'Незавершений кадр відкинуто: ' + hex(rxBuf)); rxBuf = Array.from(bytes); }
+  else rxBuf.push(...bytes);
+  if (rxBuf.length >= 4 && rxBuf[rxBuf.length - 1] === 0xAA) {
+    const frame = rxBuf; rxBuf = [];
+    const cmd = frame[2], data = frame.slice(3, -1);
+    log('rx', `${hex(frame)}   [${CMD_NAMES[cmd] || 'cmd ' + cmd.toString(16)}] дані: ${hex(data) || '—'}`);
+    if (pending && pending.cmd === cmd) {
+      clearTimeout(pending.timer); const p = pending; pending = null; p.resolve(data);
+    }
+  } else if (rxBuf.length > 64) {
+    log('err', 'Сміття в прийомі: ' + hex(rxBuf)); rxBuf = [];
+  }
+}
+
+// Послідовна черга команд: наступна йде лише після відповіді/тайм-ауту попередньої
+function send(cmd, data = [], timeout = 2500) {
+  const job = chain.then(() => sendNow(cmd, data, timeout));
+  chain = job.catch(() => {});
+  return job;
+}
+async function sendNow(cmd, data, timeout) {
+  if (!txChar) throw new Error('не підключено');
+  const frame = new Uint8Array([0x55, counter, cmd, ...data, 0xAA]);
+  counter = (counter + 1) & 0xFF;
+  const answer = new Promise(resolve => {
+    pending = { cmd, resolve, timer: setTimeout(() => {
+      if (pending && pending.cmd === cmd) { pending = null; log('err', `Немає відповіді на ${CMD_NAMES[cmd] || cmd.toString(16)}`); resolve(null); }
+    }, timeout) };
+  });
+  log('tx', `${hex(frame)}   [${CMD_NAMES[cmd] || 'cmd ' + cmd.toString(16)}]`);
+  try {
+    if (txChar.properties.write && txChar.writeValueWithResponse) await txChar.writeValueWithResponse(frame);
+    else if (txChar.writeValueWithoutResponse) await txChar.writeValueWithoutResponse(frame);
+    else await txChar.writeValue(frame);
+  } catch (e) {
+    if (pending) { clearTimeout(pending.timer); pending = null; }
+    throw e;
+  }
+  return answer;
+}
+
+// ---------- дії ----------
+async function auth(quiet) {
+  const r = await send(CMD.AUTH, getKey(), 1500);
+  const ok = !!(r && r[0] === 0x01);
+  if (ok) { authorized = true; setConnected(true); log('info', '✔ Авторизовано'); }
+  else if (!quiet) log('err', 'Ключ не прийнято. Якщо це перший раз — натисніть «Спарювання».');
+  return ok;
+}
+
+async function pair() {
+  $('btnPair').disabled = true;
+  $('pairBanner').style.display = 'block';
+  $('pairBanner').textContent = 'Утримуйте кнопку на мультиварці, поки не з’явиться «Спарено»…';
+  const deadline = Date.now() + 30000;
+  let ok = false;
+  try {
+    while (Date.now() < deadline && txChar) {
+      if (await auth(true)) { ok = true; break; }
+      await sleep(600);
+    }
+  } catch (e) { log('err', 'Спарювання: ' + e.message); }
+  $('pairBanner').textContent = ok ? '✔ Спарено! Можна відпустити кнопку.' : 'Не вдалося за 30 с. Перевірте, як увімкнути режим спарювання в інструкції.';
+  setTimeout(() => { $('pairBanner').style.display = 'none'; }, ok ? 3000 : 8000);
+  $('btnPair').disabled = !txChar;
+  if (ok) await readVersion();
+}
+
+async function readVersion() {
+  const r = await send(CMD.VERSION);
+  if (r && r.length >= 2) log('info', `Версія прошивки: ${r[0]}.${r[1]}`);
+}
+
+async function syncTime() {
+  const now = Math.floor(Date.now() / 1000);
+  const tz = -new Date().getTimezoneOffset() * 60;
+  const b = new DataView(new ArrayBuffer(8));
+  b.setInt32(0, now, true); b.setInt32(4, tz, true);
+  await send(CMD.TIME, Array.from(new Uint8Array(b.buffer)));
+}
+
+async function readStatus() {
+  const r = await send(CMD.STATUS);
+  if (!r) return null;
+  renderStatus(r);
+  return r;
+}
+
+function renderStatus(data) {
+  const tb = $('statusTable').querySelector('tbody');
+  tb.innerHTML = '';
+  data.forEach((b, i) => {
+    const tr = document.createElement('tr');
+    const changed = lastStatus && lastStatus[i] !== b;
+    [i, b.toString(16).padStart(2, '0'), b, STATUS_GUESS[i] || ''].forEach((v, j) => {
+      const td = document.createElement('td'); td.textContent = v;
+      if (changed && j < 3) td.className = 'changed';
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+  if (lastStatus && hex(lastStatus) !== hex(data)) log('info', 'Статус змінився: ' + hex(lastStatus) + ' → ' + hex(data));
+  lastStatus = data;
+}
+
+function startPoll() {
+  stopPoll();
+  pollTimer = setInterval(() => { if (!pending) readStatus().catch(e => log('err', e.message)); }, 2000);
+}
+function stopPoll() { if (pollTimer) clearInterval(pollTimer); pollTimer = null; }
+
+async function snapshot() {
+  const label = $('snapLabel').value.trim() || `знімок ${snaps.length + 1}`;
+  const r = await readStatus();
+  if (!r) { log('err', 'Знімок не зроблено — немає статусу'); return; }
+  snaps.push({ label, bytes: hex(r) });
+  store.set('r4s_snaps', JSON.stringify(snaps));
+  renderSnaps();
+  $('snapLabel').value = '';
+}
+function renderSnaps() {
+  const tb = $('snapTable').querySelector('tbody');
+  tb.innerHTML = '';
+  for (const s of snaps) {
+    const tr = document.createElement('tr');
+    for (const v of [s.label, s.bytes]) { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); }
+    tb.appendChild(tr);
+  }
+}
+
+async function sendRaw() {
+  const c = parseHex($('rawCmd').value);
+  if (c.length !== 1) throw new Error('код команди — один байт, напр. 06');
+  await send(c[0], parseHex($('rawData').value));
+}
+
+async function copyText(text, what) {
+  try { await navigator.clipboard.writeText(text); log('info', what + ' скопійовано'); }
+  catch (e) {
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta);
+    ta.select(); try { document.execCommand('copy'); log('info', what + ' скопійовано'); } catch (_) { log('err', 'Не вдалося скопіювати'); }
+    ta.remove();
+  }
+}
+
+// ---------- кнопки ----------
+const guard = fn => async () => { try { await fn(); } catch (e) { log('err', e.message || String(e)); } };
+$('btnConnect').onclick = guard(connect);
+$('btnDisconnect').onclick = disconnect;
+$('btnNewKey').onclick = newKey;
+$('btnAuth').onclick = guard(() => auth(false));
+$('btnPair').onclick = guard(pair);
+$('btnVersion').onclick = guard(readVersion);
+$('btnTime').onclick = guard(syncTime);
+$('btnStatus').onclick = guard(readStatus);
+$('poll').onchange = e => e.target.checked ? startPoll() : stopPoll();
+$('btnSnap').onclick = guard(snapshot);
+$('btnStop').onclick = guard(() => send(CMD.STOP));
+$('btnRaw').onclick = guard(sendRaw);
+$('btnCopyLog').onclick = () => copyText(Array.from($('log').children, d => d.textContent).join('\n'), 'Журнал');
+$('btnClearLog').onclick = () => { $('log').innerHTML = ''; };
+$('btnCopySnaps').onclick = () => copyText(snaps.map(s => `${s.label}\t${s.bytes}`).join('\n'), 'Знімки');
+$('btnClearSnaps').onclick = () => { snaps = []; store.set('r4s_snaps', '[]'); renderSnaps(); };
+
+// ---------- старт ----------
+(function init() {
+  if (!navigator.bluetooth) { $('noBt').style.display = 'block'; $('btnConnect').disabled = true; }
+  const k = store.get('r4s_key');
+  if (k && parseHex(k).length === 8) $('key').value = k; else newKey();
+  try { snaps = JSON.parse(store.get('r4s_snaps') || '[]'); } catch (e) { snaps = []; }
+  renderSnaps();
+  setConnected(false);
+  if (!navigator.bluetooth) $('btnConnect').disabled = true;
+  log('info', 'Сторінку завантажено. ' + (navigator.bluetooth ? 'Web Bluetooth доступний.' : 'Web Bluetooth НЕ доступний.'));
+})();
+</script>
+</body>
+</html>
